@@ -367,6 +367,43 @@
               <p class="form-hint" id="llm_locale_hint">Leave "auto" to follow your system language, or enter a locale like fr-FR.</p>
               <p class="form-hint">Your API key is stored locally in settings.json (plain text). Requests only send a prompt asking for queries — no personal data.</p>
             </div>
+
+            <label class="settings-row">
+              <div class="settings-row-text">
+                <div class="settings-row-label">France trending searches first</div>
+                <div class="settings-row-hint">Fetch the day's top Google searches in France (SerpApi) and run them in priority in Edge. When a run needs more than ~10 searches, the remainder falls back to English queries and/or repeats of the French trends.</div>
+              </div>
+              <span class="toggle-compact">
+                <input type="checkbox" id="trendsToggle" checked>
+                <span class="toggle-pill"></span>
+              </span>
+            </label>
+
+            <div id="trends_fields" class="settings-fields">
+              <div class="form-grid-2">
+                <div class="form-field">
+                  <label for="trendsApiKey">SerpApi key</label>
+                  <div class="input-with-action">
+                    <input type="password" id="trendsApiKey" placeholder="SerpApi key (or SERPAPI_API_KEY)" autocomplete="off" spellcheck="false">
+                    <button id="trendsApiKeyToggle" class="input-action" type="button" aria-label="Show SerpApi key" title="Show SerpApi key">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="form-field">
+                  <label for="trendsHours">Window</label>
+                  <select id="trendsHours">
+                    <option value="4">Last 4 hours</option>
+                    <option value="24" selected>Last 24 hours</option>
+                    <option value="48">Last 48 hours</option>
+                    <option value="168">Last 7 days</option>
+                  </select>
+                </div>
+              </div>
+              <p class="form-hint">Get a key at <a href="https://serpapi.com" target="_blank" rel="noopener noreferrer">serpapi.com</a>. You can also set the SERPAPI_API_KEY environment variable instead. Stored locally in settings.json (plain text).</p>
+            </div>
           </div>
 
           <!-- One panel per account, built by script.js -->

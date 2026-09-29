@@ -146,6 +146,15 @@ class GlobalSettingsManager:
             # detected_locale (navigator.language) or OS detection.
             "search_locale": "auto",
             "detected_locale": "",  # filled by the GUI from navigator.language
+            # France trending searches (SerpApi). When enabled, each phase
+            # fetches the day's top FR queries first and runs them in Edge
+            # in priority; any shortfall falls back to English static
+            # queries and/or repeats of the FR trends. The key is stored in
+            # plain text here, consistent with the LLM key. Env var
+            # SERPAPI_API_KEY takes precedence at runtime.
+            "use_trends_fr": True,
+            "serpapi_api_key": "",
+            "trends_hours": 24,
         }
 
         if APP_DIR and not os.path.exists(APP_DIR):
@@ -328,6 +337,46 @@ class GlobalSettingsManager:
         """Persist the locale reported by the GUI (navigator.language)."""
         settings = self.settings_for_update()
         settings["detected_locale"] = str(locale or "").strip()
+        self.save_settings(settings)
+
+    # ------------------------------------------------------------------
+    # France trending searches (SerpApi)
+    # ------------------------------------------------------------------
+
+    def get_trends_config(self):
+        """Return the France-trends query config from settings."""
+        import os
+
+        s = self.get_settings()
+        try:
+            hours = int(s.get("trends_hours", 24))
+        except (TypeError, ValueError):
+            hours = 24
+        if hours not in (4, 24, 48, 168):
+            hours = 24
+        return {
+            "use_trends_fr": bool(s.get("use_trends_fr", True)),
+            "serpapi_api_key": s.get("serpapi_api_key", "")
+            or os.environ.get("SERPAPI_API_KEY", ""),
+            "trends_hours": hours,
+        }
+
+    def set_trends_config(self, use_trends_fr, api_key, hours=24):
+        """Persist the France-trends query config.
+
+        An empty key is stored as-is; at runtime the ``SERPAPI_API_KEY``
+        env var takes precedence (see trends.resolve_serpapi_key).
+        """
+        try:
+            hours = int(hours)
+        except (TypeError, ValueError):
+            hours = 24
+        if hours not in (4, 24, 48, 168):
+            hours = 24
+        settings = self.settings_for_update()
+        settings["use_trends_fr"] = bool(use_trends_fr)
+        settings["serpapi_api_key"] = str(api_key or "").strip()
+        settings["trends_hours"] = hours
         self.save_settings(settings)
 
     def get_effective_locale(self):

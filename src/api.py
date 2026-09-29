@@ -638,6 +638,35 @@ class AutoRewarderAPI:
         """
         return llm.list_models(provider, api_key, base_url, logger=self.log)
 
+    # ------------------------------------------------------------------
+    # Exposed to JS: France trending searches (SerpApi)
+    # ------------------------------------------------------------------
+
+    def get_trends_config(self):
+        """
+        Return the France-trends config for Settings > Search terms.
+
+        Returns:
+            dict: use_trends_fr, serpapi_api_key, trends_hours.
+        """
+        return self.global_settings.get_trends_config()
+
+    def set_trends_config(self, use_trends_fr, api_key, hours=24):
+        """
+        Persist the France-trends config from the Settings modal.
+
+        Returns:
+            bool: True on success, False otherwise.
+        """
+        try:
+            self.global_settings.set_trends_config(use_trends_fr, api_key, hours)
+            state = "ON" if use_trends_fr else "OFF"
+            self.log(f"France trending searches: {state}.")
+            return True
+        except Exception as e:
+            self.log(f"[WARNING] Failed to save trends config: {e}")
+            return False
+
     def set_detected_locale(self, locale):
         """
         Store the locale the GUI read from navigator.language.
@@ -2542,23 +2571,63 @@ class AutoRewarderAPI:
         """
         Build the list of queries for a phase.
 
-        When LLM generation is enabled and an API key is set, ask the chosen
-        provider for `count` fresh queries in the user's language. Any failure
-        (no key, invalid key, quota, offline, malformed answer) or a shortfall
-        is transparently topped up / replaced with a random sample from the
-        static assets/queries.json, so the daily search target is still met and
-        the run never depends on the network.
+        Orchestration (FR-first):
+
+        1. Fetch the day's popular searches in France via SerpApi
+           (``google_trends_trending_now``, ``geo=FR``) — up to 10 queries —
+           and run them in priority in Edge.
+        2. When LLM generation is enabled, its queries join the fallback pool.
+        3. Any shortfall (``count`` > number of FR trends, typically 10) is
+           filled with English static queries from ``assets/queries.json``,
+           and — when still short — with repeats of the FR trends
+           (``random.choices``), so every search stays French if nothing else
+           is available.
+
+        Any failure (no SerpApi key, quota, offline, no LLM key, missing
+        static file) degrades gracefully to whatever pool is left, so the
+        daily search target is still met and the run never depends on the
+        network.
 
         Args:
             count (int): how many queries to produce.
 
         Returns:
-            list: up to `count` query strings (empty only if the static file is
+            list: up to `count` query strings (empty only if every source is
             missing).
         """
         if count <= 0:
             return []
 
+        from .utils import humanize_queries
+
+        # 1. France trends first (never raises; [] when disabled/unavailable).
+        fr_queries = []
+        try:
+            trends_cfg = self.global_settings.get_trends_config()
+        except Exception:
+            trends_cfg = {"use_trends_fr": False}
+        if trends_cfg.get("use_trends_fr"):
+            try:
+                from .search import trends as trends_mod
+
+                # Top 10 of the day; N > 10 is handled by the fallback /
+                # repeat logic in orchestrate_queries.
+                fr_queries = trends_mod.get_france_trending_queries(
+                    api_key=trends_cfg.get("serpapi_api_key"),
+                    limit=10,
+                    hours=trends_cfg.get("trends_hours", 24),
+                    logger=self.log,
+                )
+                if fr_queries:
+                    self.log(
+                        f"France trends: {len(fr_queries)} querie(s) "
+                        "in priority for this run."
+                    )
+            except Exception as e:
+                self.log(f"[WARNING] France trends failed ({e}); ignoring.")
+                fr_queries = []
+
+        # 2. LLM queries join the fallback pool (behind FR trends).
         queries = []
         cfg = self.global_settings.get_llm_config()
         if cfg["use_llm_queries"]:
@@ -2590,27 +2659,39 @@ class AutoRewarderAPI:
                     "using static queries."
                 )
 
-        if len(queries) >= count:
+        if len(queries) >= count and not fr_queries:
             return queries[:count]
 
         # Top up from the static file, skipping any query the LLM already
         # produced. Request extra headroom so de-dup can't leave us short.
         static = self.search_engine.load_queries_from_json(
-            JSON_FILE_PATH, num_needed=count + len(queries)
+            JSON_FILE_PATH, num_needed=count + len(queries) + len(fr_queries)
         )
 
-        if not queries:
-            from .utils import humanize_queries
+        if not fr_queries:
+            if not queries:
+                return humanize_queries(static)
 
-            return humanize_queries(static)
+            seen = set(queries)
+            extra = [q for q in static if q not in seen][: count - len(queries)]
+            self.log(
+                f"LLM returned {len(queries)}/{count} queries — "
+                f"topped up with {len(extra)} static queries."
+            )
+            return queries + extra
 
-        seen = set(queries)
-        extra = [q for q in static if q not in seen][: count - len(queries)]
-        self.log(
-            f"LLM returned {len(queries)}/{count} queries — "
-            f"topped up with {len(extra)} static queries."
+        # FR-first orchestration: FR trends, then LLM + English static
+        # fallback, then FR repeats when N > 10.
+        from .search import trends as trends_mod
+
+        seen = set(fr_queries)
+        fallback_pool = [q for q in queries if q not in seen]
+        seen.update(fallback_pool)
+        fallback_pool += [q for q in static if q not in seen]
+        combined = trends_mod.orchestrate_queries(
+            count, fr_queries, fallback_pool, logger=self.log
         )
-        return queries + extra
+        return humanize_queries(combined)
 
     def _run_visual_search_if_needed(self):
         """

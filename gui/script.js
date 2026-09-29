@@ -759,9 +759,10 @@ function open_settings_modal(panelId) {
     pywebview.api.get_launch_on_startup(),
     pywebview.api.get_close_to_tray(),
     pywebview.api.get_llm_config(),
+    pywebview.api.get_trends_config(),
     pywebview.api.get_force_tasks(),
     pywebview.api.get_app_info(),
-  ]).then(([schedules, startup, closeToTray, llmConfig, forceTasks, appInfo]) => {
+  ]).then(([schedules, startup, closeToTray, llmConfig, trendsConfig, forceTasks, appInfo]) => {
     render_account_panels(Array.isArray(schedules) ? schedules : []);
 
     // Background auto-run toggle — disable row on unsupported OS.
@@ -818,6 +819,16 @@ function open_settings_modal(panelId) {
         `Detected language: ${eff}. Leave "auto" to follow your system, or enter a locale like fr-FR.`;
     }
     apply_llm_field_state();
+
+    // France trending searches (SerpApi) — FR-first orchestration.
+    const trends = trendsConfig || {};
+    const trendsToggle = document.getElementById('trendsToggle');
+    const trendsKey = document.getElementById('trendsApiKey');
+    const trendsHours = document.getElementById('trendsHours');
+    if (trendsToggle) trendsToggle.checked = trends.use_trends_fr !== false;
+    if (trendsKey) trendsKey.value = trends.serpapi_api_key || '';
+    if (trendsHours) trendsHours.value = String(trends.trends_hours || 24);
+    apply_trends_field_state();
     // Fill the model picker once per session when the feature is usable;
     // the refresh button re-fetches on demand.
     if (cfg.use_llm_queries && cfg.llm_api_key) {
@@ -878,6 +889,26 @@ function apply_llm_field_state() {
   const fields = document.getElementById('llm_fields');
   if (!fields) return;
   fields.classList.toggle('dim', !(toggle && toggle.checked));
+}
+
+// Dim the France-trends fields when the feature is toggled off.
+function apply_trends_field_state() {
+  const toggle = document.getElementById('trendsToggle');
+  const fields = document.getElementById('trends_fields');
+  if (!fields) return;
+  fields.classList.toggle('dim', !(toggle && toggle.checked));
+}
+
+function set_trends_key_visible(visible) {
+  const key = document.getElementById('trendsApiKey');
+  const btn = document.getElementById('trendsApiKeyToggle');
+  if (!key) return;
+  key.type = visible ? 'text' : 'password';
+  if (btn) {
+    const label = visible ? 'Hide SerpApi key' : 'Show SerpApi key';
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+  }
 }
 
 function set_api_key_visible(visible) {
@@ -1599,6 +1630,15 @@ async function save_settings() {
       document.getElementById('llmBaseUrl').value
     );
 
+    // Persist France-trends config (FR-first orchestration).
+    const trendsToggleEl = document.getElementById('trendsToggle');
+    const trendsHoursEl = document.getElementById('trendsHours');
+    await pywebview.api.set_trends_config(
+      Boolean(trendsToggleEl && trendsToggleEl.checked),
+      document.getElementById('trendsApiKey').value,
+      trendsHoursEl ? parseInt(trendsHoursEl.value, 10) : 24
+    );
+
     const scheduleCalls = payloads.map(p =>
       pywebview.api.set_schedule(p.id, p.payload)
     );
@@ -1826,6 +1866,15 @@ document.addEventListener('DOMContentLoaded', function() {
   // hides the API key.
   const llmToggle = document.getElementById('llmToggle');
   if (llmToggle) llmToggle.addEventListener('change', llm_on_toggle_change);
+  const trendsToggleInit = document.getElementById('trendsToggle');
+  if (trendsToggleInit) trendsToggleInit.addEventListener('change', apply_trends_field_state);
+  const trendsKeyToggle = document.getElementById('trendsApiKeyToggle');
+  if (trendsKeyToggle) {
+    trendsKeyToggle.addEventListener('click', () => {
+      const key = document.getElementById('trendsApiKey');
+      set_trends_key_visible(Boolean(key && key.type === 'password'));
+    });
+  }
   const llmKeyToggle = document.getElementById('llmApiKeyToggle');
   if (llmKeyToggle) {
     llmKeyToggle.addEventListener('click', () => {
